@@ -6,9 +6,11 @@
 	import SynthEditor from '#lib/SynthEditor.svelte';
 	import type { ClipDraft, Track } from '#lib/daw.js';
 	import type { Instrument } from '#lib/synth.js';
+	import type { VoiceCalibration } from '#lib/vocalGuidance.js';
 
 	let tracks = $state<Track[]>([]);
 	let activeInstrument = $state<Instrument | null>(null);
+	let vocalCalibrations = $state<Partial<Record<Instrument, VoiceCalibration>>>({});
 	let fileInput: HTMLInputElement;
 	let nextTrackId = 0;
 	let nextClipId = 0;
@@ -176,7 +178,13 @@
 	</div>
 	{#if activeInstrument}
 		{#key activeInstrument}
-			<SynthEditor kind={activeInstrument} onSave={addTrack} />
+			<SynthEditor
+				kind={activeInstrument}
+				onSave={addTrack}
+				calibration={vocalCalibrations[activeInstrument]}
+				onCalibrate={(instrument, result) =>
+					(vocalCalibrations = { ...vocalCalibrations, [instrument]: result })}
+			/>
 		{/key}
 	{/if}
 	<PlayBackBar {tracks} {buffers} {arrangementVersion} onTimeChange={(time) => (playhead = time)} />

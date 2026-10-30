@@ -17,14 +17,18 @@
 		type Note,
 		type Scale
 	} from '#lib/synth.js';
-	import { analyzeVoice } from '#lib/vocalGuidance.js';
+	import { analyzeVoice, calibrateVoice, type VoiceCalibration } from '#lib/vocalGuidance.js';
 
 	let {
 		kind,
-		onSave
+		onSave,
+		calibration,
+		onCalibrate
 	}: {
 		kind: Instrument;
 		onSave: (clip: ClipDraft) => Promise<void>;
+		calibration?: VoiceCalibration;
+		onCalibrate: (kind: Instrument, result: VoiceCalibration) => void;
 	} = $props();
 
 	let bpm = $state(120);
@@ -47,6 +51,10 @@
 	let vocalRecording = $state(false);
 	let vocalStarting = $state(false);
 	let vocalProcessing = $state(false);
+	let calibrationStarting = $state(false);
+	let calibrating = $state(false);
+	let calibrationProcessing = $state(false);
+	let calibrationPhase = $state<'quiet' | 'sample' | null>(null);
 	let message = $state('');
 	let context: AudioContext | undefined;
 	let previewContext: AudioContext | undefined;
@@ -60,6 +68,11 @@
 	let recorder: MediaRecorder | undefined;
 	let microphone: MediaStream | undefined;
 	let vocalTimer: ReturnType<typeof setTimeout> | undefined;
+	let calibrationRecorder: MediaRecorder | undefined;
+	let calibrationStream: MediaStream | undefined;
+	let calibrationQuietTimer: ReturnType<typeof setTimeout> | undefined;
+	let calibrationStopTimer: ReturnType<typeof setTimeout> | undefined;
+	let calibrationCancelled = false;
 	let disposed = false;
 	type ActiveVoice = {
 		release: (at: number) => void;
@@ -85,6 +98,7 @@
 	let tempo = $derived(Math.min(240, Math.max(40, Number(bpm) || 120)));
 	let stepLength = $derived((60 / tempo) * (BEATS / STEPS));
 	let envelope = $derived({ attack, decay, sustain, release });
+	let calibrationBusy = $derived(calibrationStarting || calibrating || calibrationProcessing);
 	let playingPitches = $derived([
 		...new Set([...livePitches, ...tappedPitches, ...previewPitches])
 	]);
@@ -122,6 +136,7 @@
 	}
 
 	async function tap(pitch: number) {
+		if (calibrationBusy) return;
 		if (recording) {
 			const start = (performance.now() - recordStart) / 1000;
 			if (start < barLength(tempo))
@@ -145,6 +160,7 @@
 	}
 
 	function pressPiano(pitch: number, pointerId: number) {
+		if (calibrationBusy) return;
 		if (activeVoices[pointerId]) return;
 		const initialPitch = snapEnabled ? snapPitchToScale(pitch, scaleRoot, scale) : pitch;
 		const startedAt = performance.now();
@@ -261,6 +277,7 @@
 	}
 
 	function toggleRecording() {
+		if (calibrationBusy) return;
 		if (recording) {
 			stopRecording();
 			return;
@@ -280,12 +297,128 @@
 		if (recorder?.state === 'recording') recorder.stop();
 	}
 
+	function stopCalibration(cancel = false) {
+		if (cancel) calibrationCancelled = true;
+		if (calibrationQuietTimer) clearTimeout(calibrationQuietTimer);
+		if (calibrationStopTimer) clearTimeout(calibrationStopTimer);
+		calibrationQuietTimer = undefined;
+		calibrationStopTimer = undefined;
+		if (calibrationRecorder?.state === 'recording') calibrationRecorder.stop();
+		if (cancel) {
+			calibrating = false;
+			calibrationProcessing = true;
+			calibrationPhase = null;
+			message = 'Voice calibration cancelled.';
+		}
+	}
+
+	async function toggleCalibration() {
+		if (calibrating) {
+			stopCalibration(true);
+			return;
+		}
+		if (
+			calibrationStarting ||
+			calibrationProcessing ||
+			vocalRecording ||
+			vocalStarting ||
+			vocalProcessing
+		)
+			return;
+		if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+			message = 'Microphone calibration requires HTTPS or localhost in a supported browser.';
+			return;
+		}
+		stopPreview();
+		releaseAllPiano();
+		calibrationStarting = true;
+		calibrationCancelled = false;
+		message = 'Allow microphone access to calibrate vocal guidance.';
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+			});
+			if (disposed) {
+				for (const track of stream.getTracks()) track.stop();
+				return;
+			}
+			calibrationStream = stream;
+			const chunks: Blob[] = [];
+			const mediaRecorder = new MediaRecorder(stream);
+			calibrationRecorder = mediaRecorder;
+			mediaRecorder.ondataavailable = (event) => {
+				if (event.data.size > 0) chunks.push(event.data);
+			};
+			mediaRecorder.onstop = async () => {
+				for (const track of stream.getTracks()) track.stop();
+				calibrationStream = undefined;
+				calibrationRecorder = undefined;
+				calibrating = false;
+				calibrationPhase = null;
+				if (disposed || calibrationCancelled) {
+					calibrationProcessing = false;
+					return;
+				}
+				calibrationProcessing = true;
+				message = 'Measuring microphone levels…';
+				let decoder: AudioContext | undefined;
+				try {
+					if (!chunks.length) throw new Error('Empty calibration');
+					decoder = new AudioContext();
+					const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+					const buffer = await decoder.decodeAudioData(await blob.arrayBuffer());
+					if (disposed) return;
+					const result = calibrateVoice(buffer.getChannelData(0), buffer.sampleRate);
+					if (!result) {
+						message =
+							'Calibration needs a clearer example. Stay quiet first, then make a louder sound.';
+					} else {
+						onCalibrate(kind, result);
+						message =
+							'Vocal guidance calibrated for this ' +
+							(kind === 'piano' ? 'synth.' : 'drum machine.');
+					}
+				} catch {
+					message = 'Could not read the calibration recording.';
+				} finally {
+					if (decoder) void decoder.close();
+					calibrationProcessing = false;
+				}
+			};
+			mediaRecorder.start();
+			calibrating = true;
+			calibrationPhase = 'quiet';
+			message = 'Stay quiet for the first second.';
+			calibrationQuietTimer = setTimeout(() => {
+				calibrationPhase = 'sample';
+				message = kind === 'piano' ? 'Hum a clear note now.' : 'Beatbox several hits now.';
+			}, 900);
+			calibrationStopTimer = setTimeout(() => stopCalibration(), 2700);
+		} catch {
+			if (calibrationStream) for (const track of calibrationStream.getTracks()) track.stop();
+			calibrationStream = undefined;
+			calibrationRecorder = undefined;
+			calibrating = false;
+			calibrationPhase = null;
+			message = 'Microphone access was denied or calibration could not start.';
+		} finally {
+			calibrationStarting = false;
+		}
+	}
+
 	async function toggleVocal() {
 		if (vocalRecording) {
 			stopVocal();
 			return;
 		}
-		if (vocalStarting || vocalProcessing) return;
+		if (
+			vocalStarting ||
+			vocalProcessing ||
+			calibrationStarting ||
+			calibrating ||
+			calibrationProcessing
+		)
+			return;
 		if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
 			message =
 				'Microphone recording is unavailable. Use HTTPS or localhost in a supported browser.';
@@ -325,7 +458,13 @@
 					const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
 					const buffer = await decoder.decodeAudioData(await blob.arrayBuffer());
 					const channel = buffer.getChannelData(0);
-					notes = analyzeVoice(channel, buffer.sampleRate, capturedKind, capturedTempo);
+					notes = analyzeVoice(
+						channel,
+						buffer.sampleRate,
+						capturedKind,
+						capturedTempo,
+						calibration
+					);
 					message = notes.length
 						? 'Vocal guidance added ' + notes.length + ' notes. Quantize, edit, preview, or save.'
 						: 'No clear notes found. Try a louder hum or sharper beatbox hits.';
@@ -492,6 +631,7 @@
 		tapTimers.clear();
 		releaseAllPiano();
 		if (vocalTimer) clearTimeout(vocalTimer);
+		stopCalibration(true);
 		if (recorder?.state === 'recording') recorder.stop();
 		if (microphone) for (const track of microphone.getTracks()) track.stop();
 		if (recordTimer) clearTimeout(recordTimer);
@@ -519,14 +659,15 @@
 								previewing ||
 								vocalRecording ||
 								vocalStarting ||
-								vocalProcessing}
+								vocalProcessing ||
+								calibrationBusy}
 							class="w-18 rounded border bg-white px-1"
 						/>
 					</label>
 					<button
 						type="button"
 						class="rounded border px-2 py-1"
-						disabled={vocalRecording || vocalStarting || vocalProcessing}
+						disabled={vocalRecording || vocalStarting || vocalProcessing || calibrationBusy}
 						onclick={toggleRecording}
 					>
 						{recording ? 'Stop recording' : 'Record notes'}
@@ -534,7 +675,7 @@
 					<button
 						type="button"
 						class="rounded border px-2 py-1"
-						disabled={recording || vocalStarting || vocalProcessing}
+						disabled={recording || vocalStarting || vocalProcessing || calibrationBusy}
 						onclick={toggleVocal}
 					>
 						{vocalRecording ? 'Stop vocal guidance' : 'Vocal guidance'}
@@ -542,11 +683,42 @@
 					<button
 						type="button"
 						class="rounded border px-2 py-1"
+						disabled={recording ||
+							vocalRecording ||
+							vocalStarting ||
+							vocalProcessing ||
+							calibrationStarting ||
+							calibrationProcessing}
+						onclick={toggleCalibration}
+					>
+						{calibrating
+							? 'Cancel calibration'
+							: calibration
+								? 'Recalibrate voice'
+								: 'Calibrate voice'}
+					</button>
+					<span class="text-sm" role="status">
+						{calibrationPhase === 'quiet'
+							? 'Stay quiet…'
+							: calibrationPhase === 'sample'
+								? kind === 'piano'
+									? 'Hum a clear note…'
+									: 'Beatbox several hits…'
+								: calibrationProcessing
+									? 'Measuring…'
+									: calibration
+										? 'Voice calibrated'
+										: 'Quiet first, then hum or beatbox to calibrate.'}
+					</span>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
 						disabled={!notes.length ||
 							recording ||
 							vocalRecording ||
 							vocalStarting ||
-							vocalProcessing}
+							vocalProcessing ||
+							calibrationBusy}
 						onclick={quantize}
 					>
 						Quantize
@@ -570,7 +742,8 @@
 							recording ||
 							vocalRecording ||
 							vocalStarting ||
-							vocalProcessing}
+							vocalProcessing ||
+							calibrationBusy}
 						onclick={preview}
 					>
 						{previewing ? 'Stop preview' : 'Preview'}
@@ -765,7 +938,11 @@
 									(kind !== 'piano' || !isBlackKey(row.pitch))}
 								aria-label={row.name + ', step ' + (step + 1)}
 								aria-pressed={hasNote(row.pitch, step)}
-								disabled={recording || vocalRecording || vocalStarting || vocalProcessing}
+								disabled={recording ||
+									vocalRecording ||
+									vocalStarting ||
+									vocalProcessing ||
+									calibrationBusy}
 								onclick={() => toggleCell(row.pitch, step)}
 							></button>
 						{/each}

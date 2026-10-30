@@ -1,5 +1,40 @@
 import { barLength, type Instrument, type Note } from './synth.js';
 
+export type VoiceCalibration = { noiseFloor: number; voiceLevel: number };
+
+function frameLevels(samples: Float32Array, sampleRate: number) {
+	const frameLength = Math.max(1, Math.round(sampleRate * 0.01));
+	const levels: number[] = [];
+	for (let offset = 0; offset < samples.length; offset += frameLength) {
+		let sum = 0;
+		const end = Math.min(samples.length, offset + frameLength);
+		for (let i = offset; i < end; i++) sum += samples[i] * samples[i];
+		levels.push(Math.sqrt(sum / (end - offset)));
+	}
+	return levels;
+}
+
+function percentile(values: number[], fraction: number) {
+	const sorted = [...values].sort((a, b) => a - b);
+	return sorted[Math.floor((sorted.length - 1) * fraction)] ?? 0;
+}
+
+export function calibrateVoice(
+	input: Float32Array,
+	inputRate: number,
+	quietSeconds = 0.9
+): VoiceCalibration | null {
+	const levels = frameLevels(input, inputRate);
+	const quietFrames = Math.round(quietSeconds * 100);
+	const quiet = levels.slice(5, quietFrames);
+	const example = levels.slice(quietFrames + 5);
+	if (quiet.length < 20 || example.length < 30) return null;
+	const noiseFloor = Math.max(0.0001, percentile(quiet, 0.9));
+	const voiceLevel = percentile(example, 0.95);
+	if (voiceLevel < Math.max(0.006, noiseFloor * 2.5)) return null;
+	return { noiseFloor, voiceLevel };
+}
+
 function downsample(samples: Float32Array, sampleRate: number) {
 	const stride = Math.max(1, Math.round(sampleRate / 11025));
 	const reduced = new Float32Array(Math.ceil(samples.length / stride));
@@ -54,7 +89,12 @@ function pitchAt(samples: Float32Array, offset: number, sampleRate: number) {
 	return pitch;
 }
 
-function pianoNotes(samples: Float32Array, sampleRate: number, duration: number): Note[] {
+function pianoNotes(
+	samples: Float32Array,
+	sampleRate: number,
+	duration: number,
+	calibration?: VoiceCalibration
+): Note[] {
 	const windowLength = Math.min(1024, samples.length);
 	if (windowLength < 640) return [];
 	const hop = Math.max(1, Math.round(sampleRate * 0.025));
@@ -72,7 +112,13 @@ function pianoNotes(samples: Float32Array, sampleRate: number, duration: number)
 			pitch: pitchAt(samples, offset, sampleRate)
 		});
 	}
-	const threshold = Math.max(0.003, peak * 0.18);
+	const threshold = calibration
+		? Math.max(
+				0.003,
+				calibration.noiseFloor * 2.5,
+				Math.min(calibration.voiceLevel * 0.1, peak * 0.18)
+			)
+		: Math.max(0.003, peak * 0.18);
 	const pitches = frames.map((frame) => (frame.rms >= threshold ? frame.pitch : null));
 	for (let i = 1; i < pitches.length - 1; i++) {
 		if (pitches[i - 1] === pitches[i + 1]) pitches[i] = pitches[i - 1];
@@ -112,18 +158,23 @@ function classifyHit(samples: Float32Array, start: number, sampleRate: number) {
 	return 38;
 }
 
-function drumNotes(samples: Float32Array, sampleRate: number, duration: number): Note[] {
+function drumNotes(
+	samples: Float32Array,
+	sampleRate: number,
+	duration: number,
+	calibration?: VoiceCalibration
+): Note[] {
 	const frameLength = Math.max(1, Math.round(sampleRate * 0.01));
-	const energies: number[] = [];
-	let peak = 0;
-	for (let offset = 0; offset < samples.length; offset += frameLength) {
-		let sum = 0;
-		const end = Math.min(samples.length, offset + frameLength);
-		for (let i = offset; i < end; i++) sum += samples[i] * samples[i];
-		const rms = Math.sqrt(sum / (end - offset));
-		energies.push(rms);
-		peak = Math.max(peak, rms);
-	}
+	const energies = frameLevels(samples, sampleRate);
+	const peak = Math.max(0, ...energies);
+	const levelThreshold = calibration
+		? Math.max(
+				0.003,
+				calibration.noiseFloor * 2.5,
+				Math.min(calibration.voiceLevel * 0.1, peak * 0.12)
+			)
+		: Math.max(0.003, peak * 0.12);
+	const onsetThreshold = Math.max(0.001, peak * 0.04, (calibration?.noiseFloor ?? 0) * 0.75);
 	const notes: Note[] = [];
 	let lastHit = -1;
 	for (let i = 1; i < energies.length; i++) {
@@ -133,8 +184,8 @@ function drumNotes(samples: Float32Array, sampleRate: number, duration: number):
 		const previous = energies[i - 1];
 		if (
 			time - lastHit >= 0.09 &&
-			level > Math.max(0.003, peak * 0.12) &&
-			level - previous > Math.max(0.001, peak * 0.04) &&
+			level > levelThreshold &&
+			level - previous > onsetThreshold &&
 			level > previous * 1.45
 		) {
 			notes.push({
@@ -151,11 +202,12 @@ export function analyzeVoice(
 	input: Float32Array,
 	inputRate: number,
 	kind: Instrument,
-	bpm: number
+	bpm: number,
+	calibration?: VoiceCalibration
 ): Note[] {
 	const { samples, sampleRate } = downsample(input, inputRate);
 	const duration = Math.min(samples.length / sampleRate, barLength(bpm));
 	return kind === 'piano'
-		? pianoNotes(samples, sampleRate, duration)
-		: drumNotes(samples, sampleRate, duration);
+		? pianoNotes(samples, sampleRate, duration, calibration)
+		: drumNotes(samples, sampleRate, duration, calibration);
 }

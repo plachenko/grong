@@ -30,3 +30,5 @@ GITHUB_PAGES_BASE=/grong npm run build
 `GITHUB_PAGES_BASE` is empty for local development. Set it to the repository path when publishing from a different project repository, or leave it empty for a custom domain or a `username.github.io` repository. The `static/.nojekyll` file protects SvelteKit's `_app` assets if the output is ever served through the Jekyll publishing path.
 
 Microphone guidance requires a secure context. GitHub Pages serves the site over HTTPS.
+
+For more reliable vocal guidance, select **Calibrate voice** in the piano roll or drum machine. Stay quiet for the first second, then hum a clear note or beatbox several hits when prompted. Calibration is kept separately for each instrument while the page is open; use **Recalibrate voice** if the microphone or room changes.
