@@ -2,25 +2,35 @@
 	let {
 		onPlay,
 		onPress,
+		onMove,
 		onRelease
 	}: {
 		onPlay: (pitch: number) => void;
 		onPress: (pitch: number, pointerId: number) => void;
+		onMove: (pointerId: number, semitones: number) => void;
 		onRelease: (pointerId: number) => void;
 	} = $props();
 
 	let pressed = $state<Record<number, number>>({});
+	const pointerStarts: Record<number, number> = {};
 
 	function begin(event: PointerEvent, pitch: number) {
 		if (event.pointerType === 'mouse' && event.button !== 0) return;
 		event.preventDefault();
 		(event.currentTarget as HTMLButtonElement).setPointerCapture(event.pointerId);
+		pointerStarts[event.pointerId] = event.clientY;
 		pressed = { ...pressed, [event.pointerId]: pitch };
 		onPress(pitch, event.pointerId);
 	}
 
+	function move(event: PointerEvent) {
+		if (!(event.pointerId in pointerStarts)) return;
+		onMove(event.pointerId, (pointerStarts[event.pointerId] - event.clientY) / 60);
+	}
+
 	function end(event: PointerEvent) {
 		if (!(event.pointerId in pressed)) return;
+		delete pointerStarts[event.pointerId];
 		const next = { ...pressed };
 		delete next[event.pointerId];
 		pressed = next;
@@ -61,6 +71,7 @@
 			class:bg-blue-200={isPressed(key.pitch)}
 			aria-label={'Play ' + key.name}
 			onpointerdown={(event) => begin(event, key.pitch)}
+			onpointermove={move}
 			onpointerup={end}
 			onpointercancel={end}
 			onlostpointercapture={end}
@@ -79,6 +90,7 @@
 			style:left={((key.after + 1) / whiteKeys.length) * 100 - 4 + '%'}
 			aria-label={'Play ' + key.name}
 			onpointerdown={(event) => begin(event, key.pitch)}
+			onpointermove={move}
 			onpointerup={end}
 			onpointercancel={end}
 			onlostpointercapture={end}

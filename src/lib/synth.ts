@@ -1,7 +1,35 @@
 export type Instrument = 'piano' | 'drums';
-export type Note = { pitch: number; start: number; duration?: number };
+export type PitchPoint = { time: number; pitch: number };
+export type Note = { pitch: number; start: number; duration?: number; bends?: PitchPoint[] };
 export type ADSR = { attack: number; decay: number; sustain: number; release: number };
 export const DEFAULT_ADSR: ADSR = { attack: 0.02, decay: 0.15, sustain: 0.6, release: 0.25 };
+export const SCALE_INTERVALS = {
+	chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+	major: [0, 2, 4, 5, 7, 9, 11],
+	minor: [0, 2, 3, 5, 7, 8, 10],
+	pentatonic: [0, 2, 4, 7, 9]
+} as const;
+export type Scale = keyof typeof SCALE_INTERVALS;
+
+export function snapPitchToScale(pitch: number, root: number, scale: Scale) {
+	const allowed = SCALE_INTERVALS[scale];
+	let closest = Math.round(pitch);
+	let distance = Infinity;
+	for (let candidate = Math.floor(pitch) - 12; candidate <= Math.ceil(pitch) + 12; candidate++) {
+		const interval = (((candidate - root) % 12) + 12) % 12;
+		if (!allowed.some((value) => value === interval)) continue;
+		const nextDistance = Math.abs(candidate - pitch);
+		if (nextDistance < distance) {
+			closest = candidate;
+			distance = nextDistance;
+		}
+	}
+	return closest;
+}
+
+export function pitchFrequency(pitch: number) {
+	return 440 * 2 ** ((pitch - 69) / 12);
+}
 
 export const BEATS = 4;
 export const STEPS = 16;
@@ -47,7 +75,7 @@ export function startPianoVoice(
 	gain.connect(context.destination);
 	const oscillator = context.createOscillator();
 	oscillator.type = 'triangle';
-	oscillator.frequency.value = 440 * 2 ** ((pitch - 69) / 12);
+	oscillator.frequency.value = pitchFrequency(pitch);
 	oscillator.connect(gain);
 	gain.gain.setValueAtTime(0, when);
 	gain.gain.linearRampToValueAtTime(peak, when + attack);
@@ -55,6 +83,13 @@ export function startPianoVoice(
 	oscillator.start(when);
 	let released = false;
 	return {
+		bend(pitch: number, at: number, smooth = true) {
+			if (released) return;
+			const time = Math.max(when, at);
+			const frequency = pitchFrequency(pitch);
+			if (smooth) oscillator.frequency.setTargetAtTime(frequency, time, 0.008);
+			else oscillator.frequency.linearRampToValueAtTime(frequency, time);
+		},
 		release(at: number) {
 			if (released) return;
 			released = true;
@@ -147,7 +182,17 @@ export function schedule(
 		const length = loop
 			? Math.max(0.005, Math.min(naturalLength, available - (kind === 'piano' ? release : 0)))
 			: naturalLength;
-		playNote(context, kind, note.pitch, start + note.start, length, { ...envelope, release });
+		const when = start + note.start;
+		if (kind === 'piano') {
+			const voice = startPianoVoice(context, note.pitch, when, { ...envelope, release });
+			for (const point of note.bends ?? []) {
+				if (point.time <= 0 || point.time >= length) continue;
+				voice.bend(point.pitch, when + point.time, false);
+			}
+			voice.release(when + length);
+		} else {
+			playNote(context, kind, note.pitch, when, length, envelope);
+		}
 	}
 }
 

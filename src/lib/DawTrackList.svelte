@@ -90,7 +90,7 @@
 	function noteBlocks(clip: Clip) {
 		if (!clip.notes?.length || !clip.instrument) return [];
 		const repeats = clip.loop ? Math.max(1, Math.round(clip.duration / clip.patternDuration)) : 1;
-		const blocks: { key: string; left: number; top: number; width: number }[] = [];
+		const blocks: { key: string; left: number; top: number; width: number; bend?: boolean }[] = [];
 		for (let repeat = 0; repeat < repeats; repeat++) {
 			for (let index = 0; index < clip.notes.length; index++) {
 				const note = clip.notes[index];
@@ -114,6 +114,18 @@
 					top: (lane / rows) * 100,
 					width: Math.max(1, (Math.min(naturalWidth, maxWidth) / clip.duration) * 100)
 				});
+				if (clip.instrument === 'piano') {
+					for (const [bendIndex, bend] of (note.bends ?? []).entries()) {
+						if (bend.time > naturalWidth || bend.time > maxWidth) continue;
+						blocks.push({
+							key: repeat + '-' + index + '-bend-' + bendIndex,
+							left: ((noteTime + bend.time) / clip.duration) * 100,
+							top: Math.max(0, Math.min(93, ((72 - bend.pitch) / rows) * 100)),
+							width: Math.max(0.4, (0.025 / clip.duration) * 100),
+							bend: true
+						});
+					}
+				}
 			}
 		}
 		return blocks;
@@ -220,7 +232,9 @@
 								<div class="absolute inset-x-0 top-5 bottom-1">
 									{#each noteBlocks(clip) as note (note.key)}
 										<span
-											class="absolute h-[7%] min-h-[2px] rounded-sm bg-lime-300"
+											class="absolute h-[7%] min-h-[2px] rounded-sm"
+											class:bg-cyan-200={note.bend}
+											class:bg-lime-300={!note.bend}
 											style:left={note.left + '%'}
 											style:top={note.top + '%'}
 											style:width={note.width + '%'}

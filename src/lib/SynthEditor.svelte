@@ -8,11 +8,13 @@
 		barLength,
 		labels,
 		playNote,
+		snapPitchToScale,
 		startPianoVoice,
 		renderTrack,
 		schedule,
 		type Instrument,
-		type Note
+		type Note,
+		type Scale
 	} from '#lib/synth.js';
 	import { analyzeVoice } from '#lib/vocalGuidance.js';
 
@@ -29,6 +31,10 @@
 	let decay = $state(0.15);
 	let sustain = $state(0.6);
 	let release = $state(0.25);
+	let snapEnabled = $state(false);
+	let scaleRoot = $state(0);
+	let scale = $state<Scale>('major');
+	let activePitch = $state<number | null>(null);
 	let notes = $state<Note[]>([]);
 	let recording = $state(false);
 	let previewing = $state(false);
@@ -50,14 +56,25 @@
 	let disposed = false;
 	type ActiveVoice = {
 		release: (at: number) => void;
+		bend: (pitch: number, at: number) => void;
 		startedAt: number;
 		noteIndex: number | null;
+		basePitch: number;
+		pitch: number;
 	};
 	const activeVoices: Record<number, ActiveVoice> = {};
 
 	const columns = Array.from({ length: STEPS }, (_, index) => index);
 	const blackPitches = new Set([1, 3, 6, 8, 10]);
 	const isBlackKey = (pitch: number) => blackPitches.has(pitch % 12);
+	const pitchNames = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+	const scaleRoots = pitchNames.map((name, value) => ({ name, value }));
+	function pitchLabel(pitch: number) {
+		const nearest = Math.round(pitch);
+		const name = pitchNames[((nearest % 12) + 12) % 12] + (Math.floor(nearest / 12) - 1);
+		const cents = Math.round((pitch - nearest) * 100);
+		return name + (cents ? ' ' + (cents > 0 ? '+' : '') + cents + '¢' : '');
+	}
 	let tempo = $derived(Math.min(240, Math.max(40, Number(bpm) || 120)));
 	let stepLength = $derived((60 / tempo) * (BEATS / STEPS));
 	let envelope = $derived({ attack, decay, sustain, release });
@@ -86,33 +103,69 @@
 
 	function pressPiano(pitch: number, pointerId: number) {
 		if (activeVoices[pointerId]) return;
+		const initialPitch = snapEnabled ? snapPitchToScale(pitch, scaleRoot, scale) : pitch;
 		const startedAt = performance.now();
 		let noteIndex: number | null = null;
 		if (recording) {
 			const start = (startedAt - recordStart) / 1000;
 			if (start < barLength(tempo)) {
 				noteIndex = notes.length;
-				notes = [...notes, { pitch, start, duration: 0.05 }];
+				notes = [...notes, { pitch: initialPitch, start, duration: 0.05 }];
 			}
 		}
 		let releaseVoice: (at: number) => void = () => {};
+		let bendVoice: (pitch: number, at: number) => void = () => {};
 		try {
 			context ??= new AudioContext();
 			void context.resume().catch(() => {
 				message = 'Audio playback is unavailable in this browser.';
 			});
-			const voice = startPianoVoice(context, pitch, context.currentTime + 0.01, envelope);
+			const voice = startPianoVoice(context, initialPitch, context.currentTime + 0.01, envelope);
 			releaseVoice = voice.release;
+			bendVoice = voice.bend;
 		} catch {
 			message = 'Audio playback is unavailable in this browser.';
 		}
-		activeVoices[pointerId] = { release: releaseVoice, startedAt, noteIndex };
+		activeVoices[pointerId] = {
+			release: releaseVoice,
+			bend: bendVoice,
+			startedAt,
+			noteIndex,
+			basePitch: pitch,
+			pitch: initialPitch
+		};
+		activePitch = initialPitch;
+	}
+
+	function bendPiano(pointerId: number, semitones: number) {
+		const active = activeVoices[pointerId];
+		if (!active) return;
+		const freePitch = active.basePitch + Math.max(-2, Math.min(2, semitones));
+		const pitch = snapEnabled ? snapPitchToScale(freePitch, scaleRoot, scale) : freePitch;
+		if (Math.abs(pitch - active.pitch) < 0.015) return;
+		active.pitch = pitch;
+		activePitch = pitch;
+		active.bend(pitch, context?.currentTime ?? 0);
+		if (active.noteIndex !== null) {
+			const index = active.noteIndex;
+			const note = notes[index];
+			if (!note) return;
+			const time = Math.min(
+				(performance.now() - active.startedAt) / 1000,
+				barLength(tempo) - note.start
+			);
+			if (time <= 0) return;
+			notes = notes.map((item, itemIndex) =>
+				itemIndex === index ? { ...item, bends: [...(item.bends ?? []), { time, pitch }] } : item
+			);
+		}
 	}
 
 	function releasePiano(pointerId: number) {
 		const active = activeVoices[pointerId];
 		if (!active) return;
 		delete activeVoices[pointerId];
+		activePitch = Object.values(activeVoices).at(-1)?.pitch ?? null;
 		active.release(context?.currentTime ?? 0);
 		if (active.noteIndex !== null) {
 			const index = active.noteIndex;
@@ -447,6 +500,34 @@
 		</button>
 	</div>
 	{#if kind === 'piano'}
+		<div class="mb-3 flex flex-wrap items-center gap-3 rounded border border-red-400 p-3 text-sm">
+			<label class="flex items-center gap-2">
+				<input type="checkbox" bind:checked={snapEnabled} />
+				Snap pitch to scale
+			</label>
+			<label class="flex items-center gap-2">
+				Key
+				<select bind:value={scaleRoot} class="rounded border bg-white px-2 py-1">
+					{#each scaleRoots as root (root.value)}
+						<option value={root.value}>{root.name}</option>
+					{/each}
+				</select>
+			</label>
+			<label class="flex items-center gap-2">
+				Scale
+				<select bind:value={scale} class="rounded border bg-white px-2 py-1">
+					<option value="major">Major</option>
+					<option value="minor">Minor</option>
+					<option value="pentatonic">Major pentatonic</option>
+					<option value="chromatic">Chromatic</option>
+				</select>
+			</label>
+			<span aria-live="off"
+				>{activePitch === null
+					? 'Slide a held key up or down to bend pitch (±2 semitones).'
+					: 'Pitch: ' + pitchLabel(activePitch)}</span
+			>
+		</div>
 		<fieldset class="mb-3 rounded border border-red-400 p-3">
 			<legend class="px-1 font-medium">Envelope (ADSR)</legend>
 			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -507,7 +588,12 @@
 	</p>
 	{#if kind === 'piano'}
 		<div class="mb-3">
-			<PianoKeyboard onPlay={tap} onPress={pressPiano} onRelease={releasePiano} />
+			<PianoKeyboard
+				onPlay={tap}
+				onPress={pressPiano}
+				onMove={bendPiano}
+				onRelease={releasePiano}
+			/>
 		</div>
 	{:else}
 		<div class="mb-3 flex flex-wrap gap-2">
