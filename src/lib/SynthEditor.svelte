@@ -8,6 +8,7 @@
 		barLength,
 		labels,
 		playNote,
+		startPianoVoice,
 		renderTrack,
 		schedule,
 		type Instrument,
@@ -24,6 +25,10 @@
 	} = $props();
 
 	let bpm = $state(120);
+	let attack = $state(0.02);
+	let decay = $state(0.15);
+	let sustain = $state(0.6);
+	let release = $state(0.25);
 	let notes = $state<Note[]>([]);
 	let recording = $state(false);
 	let previewing = $state(false);
@@ -43,25 +48,86 @@
 	let microphone: MediaStream | undefined;
 	let vocalTimer: ReturnType<typeof setTimeout> | undefined;
 	let disposed = false;
+	type ActiveVoice = {
+		release: (at: number) => void;
+		startedAt: number;
+		noteIndex: number | null;
+	};
+	const activeVoices: Record<number, ActiveVoice> = {};
 
 	const columns = Array.from({ length: STEPS }, (_, index) => index);
 	const blackPitches = new Set([1, 3, 6, 8, 10]);
 	const isBlackKey = (pitch: number) => blackPitches.has(pitch % 12);
 	let tempo = $derived(Math.min(240, Math.max(40, Number(bpm) || 120)));
 	let stepLength = $derived((60 / tempo) * (BEATS / STEPS));
+	let envelope = $derived({ attack, decay, sustain, release });
 
 	async function tap(pitch: number) {
 		if (recording) {
 			const start = (performance.now() - recordStart) / 1000;
-			if (start < barLength(tempo)) notes = [...notes, { pitch, start }];
+			if (start < barLength(tempo))
+				notes = [...notes, { pitch, start, ...(kind === 'piano' ? { duration: 0.25 } : {}) }];
 		}
 		try {
 			context ??= new AudioContext();
 			await context.resume();
-			playNote(context, kind, pitch, context.currentTime + 0.01, kind === 'piano' ? 0.25 : 0.18);
+			playNote(
+				context,
+				kind,
+				pitch,
+				context.currentTime + 0.01,
+				kind === 'piano' ? 0.25 : 0.18,
+				envelope
+			);
 		} catch {
 			message = 'Audio playback is unavailable in this browser.';
 		}
+	}
+
+	function pressPiano(pitch: number, pointerId: number) {
+		if (activeVoices[pointerId]) return;
+		const startedAt = performance.now();
+		let noteIndex: number | null = null;
+		if (recording) {
+			const start = (startedAt - recordStart) / 1000;
+			if (start < barLength(tempo)) {
+				noteIndex = notes.length;
+				notes = [...notes, { pitch, start, duration: 0.05 }];
+			}
+		}
+		let releaseVoice: (at: number) => void = () => {};
+		try {
+			context ??= new AudioContext();
+			void context.resume().catch(() => {
+				message = 'Audio playback is unavailable in this browser.';
+			});
+			const voice = startPianoVoice(context, pitch, context.currentTime + 0.01, envelope);
+			releaseVoice = voice.release;
+		} catch {
+			message = 'Audio playback is unavailable in this browser.';
+		}
+		activeVoices[pointerId] = { release: releaseVoice, startedAt, noteIndex };
+	}
+
+	function releasePiano(pointerId: number) {
+		const active = activeVoices[pointerId];
+		if (!active) return;
+		delete activeVoices[pointerId];
+		active.release(context?.currentTime ?? 0);
+		if (active.noteIndex !== null) {
+			const index = active.noteIndex;
+			const note = notes[index];
+			if (!note) return;
+			const duration = Math.max(
+				0.05,
+				Math.min((performance.now() - active.startedAt) / 1000, barLength(tempo) - note.start)
+			);
+			notes = notes.map((item, itemIndex) => (itemIndex === index ? { ...item, duration } : item));
+		}
+	}
+
+	function releaseAllPiano() {
+		for (const pointerId of Object.keys(activeVoices)) releasePiano(Number(pointerId));
 	}
 
 	function toggleCell(pitch: number, step: number) {
@@ -86,6 +152,7 @@
 	}
 
 	function stopRecording() {
+		releaseAllPiano();
 		if (recordTimer) clearTimeout(recordTimer);
 		recordTimer = undefined;
 		recording = false;
@@ -100,6 +167,7 @@
 			return;
 		}
 		stopPreview();
+		releaseAllPiano();
 		notes = [];
 		recording = true;
 		recordStart = performance.now();
@@ -215,6 +283,7 @@
 			await activeContext.resume();
 			const previewTempo = tempo;
 			const previewNotes = notes.map((note) => ({ ...note }));
+			const previewEnvelope = { ...envelope };
 			const bar = barLength(previewTempo);
 			let nextStart = activeContext.currentTime + 0.05;
 			previewing = true;
@@ -222,15 +291,40 @@
 				const queueBars = () => {
 					if (previewContext !== activeContext) return;
 					while (nextStart < activeContext.currentTime + bar * 1.5) {
-						schedule(activeContext, kind, previewNotes, previewTempo, nextStart, true);
+						schedule(
+							activeContext,
+							kind,
+							previewNotes,
+							previewTempo,
+							nextStart,
+							true,
+							previewEnvelope
+						);
 						nextStart += bar;
 					}
 					previewTimer = setTimeout(queueBars, Math.min(250, bar * 250));
 				};
 				queueBars();
 			} else {
-				schedule(activeContext, kind, previewNotes, previewTempo, nextStart);
-				previewTimer = setTimeout(stopPreview, (bar + 0.3) * 1000);
+				schedule(
+					activeContext,
+					kind,
+					previewNotes,
+					previewTempo,
+					nextStart,
+					false,
+					previewEnvelope
+				);
+				const end = Math.max(
+					bar + 0.3,
+					...previewNotes.map(
+						(note) =>
+							note.start +
+							(note.duration ?? (kind === 'piano' ? 30 / previewTempo : 0.2)) +
+							(kind === 'piano' ? previewEnvelope.release : 0)
+					)
+				);
+				previewTimer = setTimeout(stopPreview, (end + 0.1) * 1000);
 			}
 		} catch {
 			stopPreview();
@@ -242,7 +336,7 @@
 		if (!notes.length || saving) return;
 		saving = true;
 		try {
-			const blob = await renderTrack(kind, notes, tempo, loopEnabled);
+			const blob = await renderTrack(kind, notes, tempo, loopEnabled, envelope);
 			const name = (kind === 'piano' ? 'Piano roll' : 'Drum machine') + ' take ' + takeNumber++;
 			await onSave({
 				name,
@@ -262,6 +356,7 @@
 
 	onDestroy(() => {
 		disposed = true;
+		releaseAllPiano();
 		if (vocalTimer) clearTimeout(vocalTimer);
 		if (recorder?.state === 'recording') recorder.stop();
 		if (microphone) for (const track of microphone.getTracks()) track.stop();
@@ -351,13 +446,68 @@
 			Clear
 		</button>
 	</div>
+	{#if kind === 'piano'}
+		<fieldset class="mb-3 rounded border border-red-400 p-3">
+			<legend class="px-1 font-medium">Envelope (ADSR)</legend>
+			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+				<label class="flex items-center gap-2 text-sm">
+					Attack
+					<input
+						type="range"
+						min="0"
+						max="2"
+						step="0.01"
+						bind:value={attack}
+						class="min-w-0 flex-1"
+					/>
+					<output class="w-10 text-right">{attack.toFixed(2)}s</output>
+				</label>
+				<label class="flex items-center gap-2 text-sm">
+					Decay
+					<input
+						type="range"
+						min="0"
+						max="2"
+						step="0.01"
+						bind:value={decay}
+						class="min-w-0 flex-1"
+					/>
+					<output class="w-10 text-right">{decay.toFixed(2)}s</output>
+				</label>
+				<label class="flex items-center gap-2 text-sm">
+					Sustain
+					<input
+						type="range"
+						min="0"
+						max="1"
+						step="0.01"
+						bind:value={sustain}
+						class="min-w-0 flex-1"
+					/>
+					<output class="w-10 text-right">{Math.round(sustain * 100)}%</output>
+				</label>
+				<label class="flex items-center gap-2 text-sm">
+					Release
+					<input
+						type="range"
+						min="0"
+						max="3"
+						step="0.01"
+						bind:value={release}
+						class="min-w-0 flex-1"
+					/>
+					<output class="w-10 text-right">{release.toFixed(2)}s</output>
+				</label>
+			</div>
+		</fieldset>
+	{/if}
 	<p class="mb-2 text-sm">
 		Tap the keys, use vocal guidance, or click cells to build a one-bar pattern. Each column is a
 		sixteenth note.
 	</p>
 	{#if kind === 'piano'}
 		<div class="mb-3">
-			<PianoKeyboard onPlay={tap} />
+			<PianoKeyboard onPlay={tap} onPress={pressPiano} onRelease={releasePiano} />
 		</div>
 	{:else}
 		<div class="mb-3 flex flex-wrap gap-2">

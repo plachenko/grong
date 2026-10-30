@@ -1,6 +1,6 @@
 # Grong
 
-A browser-based music sketchpad with a piano roll, drum machine, microphone-guided note capture, quantization, looping, and a multitrack timeline. Audio is processed in the browser; there is no server or account.
+A browser-based music sketchpad with a multitouch piano roll and ADSR envelope, drum machine, microphone-guided note capture, quantization, looping, and a multitrack timeline. Audio is processed in the browser; there is no server or account.
 
 ## Develop locally
 

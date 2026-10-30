@@ -53,6 +53,7 @@
 				loop,
 				instrument: draft.instrument,
 				notes: draft.notes,
+				bpm: draft.bpm,
 				waveform: draft.notes ? undefined : waveform(buffer)
 			};
 			buffers.set(id, buffer);

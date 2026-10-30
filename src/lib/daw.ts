@@ -22,6 +22,7 @@ export type Clip = {
 	loop: boolean;
 	instrument?: Instrument;
 	notes?: Note[];
+	bpm?: number;
 	waveform?: number[];
 };
 

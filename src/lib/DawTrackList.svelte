@@ -104,11 +104,15 @@
 								? 1
 								: 2;
 				const rows = clip.instrument === 'piano' ? 13 : 3;
+				const naturalWidth =
+					note.duration ??
+					(clip.instrument === 'piano' && clip.bpm ? 30 / clip.bpm : clip.patternDuration / 16);
+				const maxWidth = clip.loop ? clip.patternDuration - note.start : clip.duration - noteTime;
 				blocks.push({
 					key: repeat + '-' + index,
 					left: (noteTime / clip.duration) * 100,
 					top: (lane / rows) * 100,
-					width: Math.max(1, (clip.patternDuration / 16 / clip.duration) * 100)
+					width: Math.max(1, (Math.min(naturalWidth, maxWidth) / clip.duration) * 100)
 				});
 			}
 		}

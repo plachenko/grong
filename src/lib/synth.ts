@@ -1,5 +1,7 @@
 export type Instrument = 'piano' | 'drums';
-export type Note = { pitch: number; start: number };
+export type Note = { pitch: number; start: number; duration?: number };
+export type ADSR = { attack: number; decay: number; sustain: number; release: number };
+export const DEFAULT_ADSR: ADSR = { attack: 0.02, decay: 0.15, sustain: 0.6, release: 0.25 };
 
 export const BEATS = 4;
 export const STEPS = 16;
@@ -30,29 +32,67 @@ export function barLength(bpm: number) {
 	return (60 / bpm) * BEATS;
 }
 
+export function startPianoVoice(
+	context: BaseAudioContext,
+	pitch: number,
+	when: number,
+	envelope: ADSR = DEFAULT_ADSR
+) {
+	const peak = 0.3;
+	const attack = Math.max(0.005, envelope.attack);
+	const decay = Math.max(0.005, envelope.decay);
+	const sustain = Math.min(1, Math.max(0, envelope.sustain));
+	const release = Math.max(0.005, envelope.release);
+	const gain = context.createGain();
+	gain.connect(context.destination);
+	const oscillator = context.createOscillator();
+	oscillator.type = 'triangle';
+	oscillator.frequency.value = 440 * 2 ** ((pitch - 69) / 12);
+	oscillator.connect(gain);
+	gain.gain.setValueAtTime(0, when);
+	gain.gain.linearRampToValueAtTime(peak, when + attack);
+	gain.gain.linearRampToValueAtTime(peak * sustain, when + attack + decay);
+	oscillator.start(when);
+	let released = false;
+	return {
+		release(at: number) {
+			if (released) return;
+			released = true;
+			const off = Math.max(when, at);
+			const elapsed = off - when;
+			const level =
+				elapsed < attack
+					? (peak * elapsed) / attack
+					: elapsed < attack + decay
+						? peak + ((peak * sustain - peak) * (elapsed - attack)) / decay
+						: peak * sustain;
+			if (typeof gain.gain.cancelAndHoldAtTime === 'function') {
+				gain.gain.cancelAndHoldAtTime(off);
+			} else {
+				gain.gain.cancelScheduledValues(off);
+				gain.gain.setValueAtTime(level, off);
+			}
+			gain.gain.linearRampToValueAtTime(0, off + release);
+			oscillator.stop(off + release + 0.005);
+		}
+	};
+}
+
 export function playNote(
 	context: BaseAudioContext,
 	kind: Instrument,
 	pitch: number,
 	when: number,
-	length: number
+	length: number,
+	envelope: ADSR = DEFAULT_ADSR
 ) {
+	if (kind === 'piano') {
+		startPianoVoice(context, pitch, when, envelope).release(when + length);
+		return;
+	}
 	const gain = context.createGain();
 	gain.connect(context.destination);
 	const end = when + length;
-	if (kind === 'piano') {
-		const oscillator = context.createOscillator();
-		oscillator.type = 'triangle';
-		oscillator.frequency.value = 440 * 2 ** ((pitch - 69) / 12);
-		oscillator.connect(gain);
-		gain.gain.setValueAtTime(0.0001, when);
-		gain.gain.exponentialRampToValueAtTime(0.3, when + 0.01);
-		gain.gain.exponentialRampToValueAtTime(0.0001, end);
-		oscillator.start(when);
-		oscillator.stop(end);
-		return;
-	}
-
 	if (pitch === 36) {
 		const oscillator = context.createOscillator();
 		oscillator.type = 'sine';
@@ -92,15 +132,22 @@ export function schedule(
 	notes: Note[],
 	bpm: number,
 	start: number,
-	loop = false
+	loop = false,
+	envelope: ADSR = DEFAULT_ADSR
 ) {
 	const beat = 60 / bpm;
 	for (const note of notes) {
-		const naturalLength = kind === 'piano' ? beat / 2 : note.pitch === 42 ? 0.08 : 0.2;
+		const naturalLength =
+			kind === 'piano' ? (note.duration ?? beat / 2) : note.pitch === 42 ? 0.08 : 0.2;
+		const available = barLength(bpm) - note.start - 0.005;
+		const release =
+			loop && kind === 'piano'
+				? Math.min(envelope.release, Math.max(0.005, available - 0.005))
+				: envelope.release;
 		const length = loop
-			? Math.max(0.015, Math.min(naturalLength, barLength(bpm) - note.start - 0.005))
+			? Math.max(0.005, Math.min(naturalLength, available - (kind === 'piano' ? release : 0)))
 			: naturalLength;
-		playNote(context, kind, note.pitch, start + note.start, length);
+		playNote(context, kind, note.pitch, start + note.start, length, { ...envelope, release });
 	}
 }
 
@@ -108,12 +155,24 @@ export async function renderTrack(
 	kind: Instrument,
 	notes: Note[],
 	bpm: number,
-	loop = false
+	loop = false,
+	envelope: ADSR = DEFAULT_ADSR
 ): Promise<Blob> {
-	const seconds = barLength(bpm) + (loop ? 0 : 0.25);
+	const seconds = loop
+		? barLength(bpm)
+		: Math.max(
+				barLength(bpm) + 0.25,
+				...notes.map(
+					(note) =>
+						note.start +
+						(note.duration ?? (kind === 'piano' ? 30 / bpm : 0.2)) +
+						(kind === 'piano' ? envelope.release : 0) +
+						0.05
+				)
+			);
 	const sampleRate = 44100;
 	const context = new OfflineAudioContext(1, Math.ceil(seconds * sampleRate), sampleRate);
-	schedule(context, kind, notes, bpm, 0, loop);
+	schedule(context, kind, notes, bpm, 0, loop, envelope);
 	const rendered = await context.startRendering();
 	const samples = rendered.getChannelData(0);
 	const bytes = new ArrayBuffer(44 + samples.length * 2);
