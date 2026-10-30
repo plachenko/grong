@@ -166,11 +166,6 @@
 				Add empty track
 			</button>
 		</div>
-		{#if activeInstrument}
-			{#key activeInstrument}
-				<SynthEditor kind={activeInstrument} onSave={addTrack} />
-			{/key}
-		{/if}
 		{#if loadingCount}<p class="px-4 pb-2 text-sm">
 				Loading {loadingCount} clip{loadingCount === 1 ? '' : 's'}…
 			</p>{/if}
@@ -179,5 +174,10 @@
 			<DawTrackList {tracks} {playhead} onMixChange={changeMix} onMove={moveClip} />
 		</div>
 	</div>
+	{#if activeInstrument}
+		{#key activeInstrument}
+			<SynthEditor kind={activeInstrument} onSave={addTrack} />
+		{/key}
+	{/if}
 	<PlayBackBar {tracks} {buffers} {arrangementVersion} onTimeChange={(time) => (playhead = time)} />
 </div>

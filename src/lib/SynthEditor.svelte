@@ -500,244 +500,278 @@
 	});
 </script>
 
-<section class="border-b border-red-400 bg-red-200 p-4">
-	<div class="mb-3 flex flex-wrap items-center gap-3">
-		<h2 class="text-lg font-semibold">{kind === 'piano' ? 'Piano roll' : 'Drum machine'}</h2>
-		<label class="flex items-center gap-2">
-			BPM
-			<input
-				type="number"
-				min="40"
-				max="240"
-				bind:value={bpm}
-				disabled={recording || previewing || vocalRecording || vocalStarting || vocalProcessing}
-				class="w-18 rounded border bg-white px-1"
-			/>
-		</label>
-		<button
-			type="button"
-			class="rounded border px-2 py-1"
-			disabled={vocalRecording || vocalStarting || vocalProcessing}
-			onclick={toggleRecording}
-		>
-			{recording ? 'Stop recording' : 'Record notes'}
-		</button>
-		<button
-			type="button"
-			class="rounded border px-2 py-1"
-			disabled={recording || vocalStarting || vocalProcessing}
-			onclick={toggleVocal}
-		>
-			{vocalRecording ? 'Stop vocal guidance' : 'Vocal guidance'}
-		</button>
-		<button
-			type="button"
-			class="rounded border px-2 py-1"
-			disabled={!notes.length || recording || vocalRecording || vocalStarting || vocalProcessing}
-			onclick={quantize}
-		>
-			Quantize
-		</button>
-		<label class="flex items-center gap-1">
-			<input
-				type="checkbox"
-				bind:checked={loopEnabled}
-				disabled={recording || previewing || vocalRecording || vocalStarting || vocalProcessing}
-			/>
-			Loop pattern
-		</label>
-		<button
-			type="button"
-			class="rounded border px-2 py-1"
-			disabled={!notes.length || recording || vocalRecording || vocalStarting || vocalProcessing}
-			onclick={preview}
-		>
-			{previewing ? 'Stop preview' : 'Preview'}
-		</button>
-		<button
-			type="button"
-			class="rounded border px-2 py-1"
-			disabled={!notes.length ||
-				recording ||
-				vocalRecording ||
-				vocalStarting ||
-				vocalProcessing ||
-				saving}
-			onclick={save}
-		>
-			{saving ? 'Rendering…' : 'Save as track'}
-		</button>
-		<button
-			type="button"
-			class="rounded border px-2 py-1"
-			disabled={recording || vocalRecording || vocalStarting || vocalProcessing || !notes.length}
-			onclick={() => {
-				notes = [];
-				message = '';
-				stopPreview();
-			}}
-		>
-			Clear
-		</button>
-	</div>
-	{#if kind === 'piano'}
-		<div class="mb-3 flex flex-wrap items-center gap-3 rounded border border-red-400 p-3 text-sm">
-			<label class="flex items-center gap-2">
-				<input type="checkbox" bind:checked={snapEnabled} />
-				Snap pitch to scale
-			</label>
-			<label class="flex items-center gap-2">
-				Key
-				<select bind:value={scaleRoot} class="rounded border bg-white px-2 py-1">
-					{#each scaleRoots as root (root.value)}
-						<option value={root.value}>{root.name}</option>
-					{/each}
-				</select>
-			</label>
-			<label class="flex items-center gap-2">
-				Scale
-				<select bind:value={scale} class="rounded border bg-white px-2 py-1">
-					<option value="major">Major</option>
-					<option value="minor">Minor</option>
-					<option value="pentatonic">Major pentatonic</option>
-					<option value="chromatic">Chromatic</option>
-				</select>
-			</label>
-			<span aria-live="off"
-				>{activePitch === null
-					? 'Slide a held key up or down to bend pitch (±2 semitones).'
-					: 'Pitch: ' + pitchLabel(activePitch)}</span
-			>
-		</div>
-		<fieldset class="mb-3 rounded border border-red-400 p-3">
-			<legend class="px-1 font-medium">Envelope (ADSR)</legend>
-			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-				<label class="flex items-center gap-2 text-sm">
-					Attack
-					<input
-						type="range"
-						min="0"
-						max="2"
-						step="0.01"
-						bind:value={attack}
-						class="min-w-0 flex-1"
-					/>
-					<output class="w-10 text-right">{attack.toFixed(2)}s</output>
-				</label>
-				<label class="flex items-center gap-2 text-sm">
-					Decay
-					<input
-						type="range"
-						min="0"
-						max="2"
-						step="0.01"
-						bind:value={decay}
-						class="min-w-0 flex-1"
-					/>
-					<output class="w-10 text-right">{decay.toFixed(2)}s</output>
-				</label>
-				<label class="flex items-center gap-2 text-sm">
-					Sustain
-					<input
-						type="range"
-						min="0"
-						max="1"
-						step="0.01"
-						bind:value={sustain}
-						class="min-w-0 flex-1"
-					/>
-					<output class="w-10 text-right">{Math.round(sustain * 100)}%</output>
-				</label>
-				<label class="flex items-center gap-2 text-sm">
-					Release
-					<input
-						type="range"
-						min="0"
-						max="3"
-						step="0.01"
-						bind:value={release}
-						class="min-w-0 flex-1"
-					/>
-					<output class="w-10 text-right">{release.toFixed(2)}s</output>
-				</label>
+<section
+	class="flex h-[min(68dvh,44rem)] min-h-0 shrink-0 flex-col overflow-hidden border-b border-red-400 bg-red-200"
+>
+	<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+		<div class="flex flex-row flex-wrap items-start gap-4">
+			<div class="min-w-[18rem] flex-1">
+				<div class="mb-3 flex flex-wrap items-center gap-3">
+					<h2 class="text-lg font-semibold">{kind === 'piano' ? 'Piano roll' : 'Drum machine'}</h2>
+					<label class="flex items-center gap-2">
+						BPM
+						<input
+							type="number"
+							min="40"
+							max="240"
+							bind:value={bpm}
+							disabled={recording ||
+								previewing ||
+								vocalRecording ||
+								vocalStarting ||
+								vocalProcessing}
+							class="w-18 rounded border bg-white px-1"
+						/>
+					</label>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
+						disabled={vocalRecording || vocalStarting || vocalProcessing}
+						onclick={toggleRecording}
+					>
+						{recording ? 'Stop recording' : 'Record notes'}
+					</button>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
+						disabled={recording || vocalStarting || vocalProcessing}
+						onclick={toggleVocal}
+					>
+						{vocalRecording ? 'Stop vocal guidance' : 'Vocal guidance'}
+					</button>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
+						disabled={!notes.length ||
+							recording ||
+							vocalRecording ||
+							vocalStarting ||
+							vocalProcessing}
+						onclick={quantize}
+					>
+						Quantize
+					</button>
+					<label class="flex items-center gap-1">
+						<input
+							type="checkbox"
+							bind:checked={loopEnabled}
+							disabled={recording ||
+								previewing ||
+								vocalRecording ||
+								vocalStarting ||
+								vocalProcessing}
+						/>
+						Loop pattern
+					</label>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
+						disabled={!notes.length ||
+							recording ||
+							vocalRecording ||
+							vocalStarting ||
+							vocalProcessing}
+						onclick={preview}
+					>
+						{previewing ? 'Stop preview' : 'Preview'}
+					</button>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
+						disabled={!notes.length ||
+							recording ||
+							vocalRecording ||
+							vocalStarting ||
+							vocalProcessing ||
+							saving}
+						onclick={save}
+					>
+						{saving ? 'Rendering…' : 'Save as track'}
+					</button>
+					<button
+						type="button"
+						class="rounded border px-2 py-1"
+						disabled={recording ||
+							vocalRecording ||
+							vocalStarting ||
+							vocalProcessing ||
+							!notes.length}
+						onclick={() => {
+							notes = [];
+							message = '';
+							stopPreview();
+						}}
+					>
+						Clear
+					</button>
+				</div>
 			</div>
-		</fieldset>
-	{/if}
-	<p class="mb-2 text-sm">
-		Tap the keys, use vocal guidance, or click cells to build a one-bar pattern. Each column is a
-		sixteenth note.
-	</p>
-	{#if kind === 'piano'}
-		<div class="mb-3">
-			<PianoKeyboard
-				onPlay={tap}
-				onPress={pressPiano}
-				onMove={bendPiano}
-				onRelease={releasePiano}
-				{playingPitches}
-			/>
-		</div>
-	{:else}
-		<div class="mb-3 flex flex-wrap gap-2">
-			{#each labels[kind] as row (row.pitch)}
-				<button
-					type="button"
-					class="rounded border-2 border-red-500 px-3 py-2"
-					class:bg-white={!playingPitches.includes(row.pitch)}
-					class:bg-amber-300={playingPitches.includes(row.pitch)}
-					aria-pressed={playingPitches.includes(row.pitch)}
-					onclick={() => tap(row.pitch)}
-				>
-					{row.name}
-				</button>
-			{/each}
-		</div>
-	{/if}
-	<div class="overflow-x-auto">
-		<div class="min-w-[640px]">
-			<div class="grid grid-cols-[5rem_repeat(16,minmax(0,1fr))] gap-0.5 text-center text-xs">
-				<span></span>
-				{#each columns as step (step)}
-					<span>{step + 1}</span>
-				{/each}
-				{#each labels[kind] as row (row.pitch)}
-					{#if kind === 'piano'}
-						<button
-							type="button"
-							class="h-7 rounded-r border border-slate-700 text-left text-xs"
-							class:bg-slate-900={isBlackKey(row.pitch) && !playingPitches.includes(row.pitch)}
-							class:text-white={isBlackKey(row.pitch)}
-							class:bg-white={!isBlackKey(row.pitch) && !playingPitches.includes(row.pitch)}
-							class:bg-amber-500={isBlackKey(row.pitch) && playingPitches.includes(row.pitch)}
-							class:bg-amber-300={!isBlackKey(row.pitch) && playingPitches.includes(row.pitch)}
-							class:pl-4={isBlackKey(row.pitch)}
-							class:pl-2={!isBlackKey(row.pitch)}
-							aria-label={'Play ' + row.name}
-							aria-pressed={playingPitches.includes(row.pitch)}
-							onclick={() => tap(row.pitch)}>{row.name}</button
+			{#if kind === 'piano'}
+				<div class="min-w-[18rem] flex-1">
+					<div
+						class="mb-3 flex flex-wrap items-center gap-3 rounded border border-red-400 p-3 text-sm"
+					>
+						<label class="flex items-center gap-2">
+							<input type="checkbox" bind:checked={snapEnabled} />
+							Snap pitch to scale
+						</label>
+						<label class="flex items-center gap-2">
+							Key
+							<select bind:value={scaleRoot} class="rounded border bg-white px-2 py-1">
+								{#each scaleRoots as root (root.value)}
+									<option value={root.value}>{root.name}</option>
+								{/each}
+							</select>
+						</label>
+						<label class="flex items-center gap-2">
+							Scale
+							<select bind:value={scale} class="rounded border bg-white px-2 py-1">
+								<option value="major">Major</option>
+								<option value="minor">Minor</option>
+								<option value="pentatonic">Major pentatonic</option>
+								<option value="chromatic">Chromatic</option>
+							</select>
+						</label>
+						<span aria-live="off"
+							>{activePitch === null
+								? 'Slide a held key up or down to bend pitch (±2 semitones).'
+								: 'Pitch: ' + pitchLabel(activePitch)}</span
 						>
-					{:else}
-						<span class="self-center text-left">{row.name}</span>
-					{/if}
-					{#each columns as step (step)}
-						<button
-							type="button"
-							class="h-7 rounded border border-red-400"
-							class:bg-blue-500={hasNote(row.pitch, step)}
-							class:bg-slate-100={kind === 'piano' &&
-								isBlackKey(row.pitch) &&
-								!hasNote(row.pitch, step)}
-							class:bg-white={!hasNote(row.pitch, step) &&
-								(kind !== 'piano' || !isBlackKey(row.pitch))}
-							aria-label={row.name + ', step ' + (step + 1)}
-							aria-pressed={hasNote(row.pitch, step)}
-							disabled={recording || vocalRecording || vocalStarting || vocalProcessing}
-							onclick={() => toggleCell(row.pitch, step)}
-						></button>
-					{/each}
+					</div>
+					<fieldset class="mb-3 rounded border border-red-400 p-3">
+						<legend class="px-1 font-medium">Envelope (ADSR)</legend>
+						<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+							<label class="flex items-center gap-2 text-sm">
+								Attack
+								<input
+									type="range"
+									min="0"
+									max="2"
+									step="0.01"
+									bind:value={attack}
+									class="min-w-0 flex-1"
+								/>
+								<output class="w-10 text-right">{attack.toFixed(2)}s</output>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								Decay
+								<input
+									type="range"
+									min="0"
+									max="2"
+									step="0.01"
+									bind:value={decay}
+									class="min-w-0 flex-1"
+								/>
+								<output class="w-10 text-right">{decay.toFixed(2)}s</output>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								Sustain
+								<input
+									type="range"
+									min="0"
+									max="1"
+									step="0.01"
+									bind:value={sustain}
+									class="min-w-0 flex-1"
+								/>
+								<output class="w-10 text-right">{Math.round(sustain * 100)}%</output>
+							</label>
+							<label class="flex items-center gap-2 text-sm">
+								Release
+								<input
+									type="range"
+									min="0"
+									max="3"
+									step="0.01"
+									bind:value={release}
+									class="min-w-0 flex-1"
+								/>
+								<output class="w-10 text-right">{release.toFixed(2)}s</output>
+							</label>
+						</div>
+					</fieldset>
+				</div>
+			{/if}
+		</div>
+		<p class="mb-2 text-sm">
+			Tap the keys, use vocal guidance, or click cells to build a one-bar pattern. Each column is a
+			sixteenth note.
+		</p>
+		{#if message}<p class="mt-2 text-sm" role="status">{message}</p>{/if}
+	</div>
+	<div class="flex h-[62%] min-h-0 shrink-0 flex-col gap-3 border-t border-red-400 p-3">
+		{#if kind === 'piano'}
+			<div class="shrink-0">
+				<PianoKeyboard
+					onPlay={tap}
+					onPress={pressPiano}
+					onMove={bendPiano}
+					onRelease={releasePiano}
+					{playingPitches}
+				/>
+			</div>
+		{:else}
+			<div class="flex shrink-0 flex-wrap gap-2">
+				{#each labels[kind] as row (row.pitch)}
+					<button
+						type="button"
+						class="rounded border-2 border-red-500 px-3 py-2"
+						class:bg-white={!playingPitches.includes(row.pitch)}
+						class:bg-amber-300={playingPitches.includes(row.pitch)}
+						aria-pressed={playingPitches.includes(row.pitch)}
+						onclick={() => tap(row.pitch)}
+					>
+						{row.name}
+					</button>
 				{/each}
+			</div>
+		{/if}
+		<div class="min-h-0 flex-1 overflow-auto overscroll-contain">
+			<div class="min-w-[640px]">
+				<div class="grid grid-cols-[5rem_repeat(16,minmax(0,1fr))] gap-0.5 text-center text-xs">
+					<span></span>
+					{#each columns as step (step)}
+						<span>{step + 1}</span>
+					{/each}
+					{#each labels[kind] as row (row.pitch)}
+						{#if kind === 'piano'}
+							<button
+								type="button"
+								class="h-7 rounded-r border border-slate-700 text-left text-xs"
+								class:bg-slate-900={isBlackKey(row.pitch) && !playingPitches.includes(row.pitch)}
+								class:text-white={isBlackKey(row.pitch)}
+								class:bg-white={!isBlackKey(row.pitch) && !playingPitches.includes(row.pitch)}
+								class:bg-amber-500={isBlackKey(row.pitch) && playingPitches.includes(row.pitch)}
+								class:bg-amber-300={!isBlackKey(row.pitch) && playingPitches.includes(row.pitch)}
+								class:pl-4={isBlackKey(row.pitch)}
+								class:pl-2={!isBlackKey(row.pitch)}
+								aria-label={'Play ' + row.name}
+								aria-pressed={playingPitches.includes(row.pitch)}
+								onclick={() => tap(row.pitch)}>{row.name}</button
+							>
+						{:else}
+							<span class="self-center text-left">{row.name}</span>
+						{/if}
+						{#each columns as step (step)}
+							<button
+								type="button"
+								class="h-7 rounded border border-red-400"
+								class:bg-blue-500={hasNote(row.pitch, step)}
+								class:bg-slate-100={kind === 'piano' &&
+									isBlackKey(row.pitch) &&
+									!hasNote(row.pitch, step)}
+								class:bg-white={!hasNote(row.pitch, step) &&
+									(kind !== 'piano' || !isBlackKey(row.pitch))}
+								aria-label={row.name + ', step ' + (step + 1)}
+								aria-pressed={hasNote(row.pitch, step)}
+								disabled={recording || vocalRecording || vocalStarting || vocalProcessing}
+								onclick={() => toggleCell(row.pitch, step)}
+							></button>
+						{/each}
+					{/each}
+				</div>
 			</div>
 		</div>
 	</div>
-	{#if message}<p class="mt-2 text-sm" role="status">{message}</p>{/if}
 </section>
