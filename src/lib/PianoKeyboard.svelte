@@ -3,12 +3,14 @@
 		onPlay,
 		onPress,
 		onMove,
-		onRelease
+		onRelease,
+		playingPitches
 	}: {
 		onPlay: (pitch: number) => void;
 		onPress: (pitch: number, pointerId: number) => void;
 		onMove: (pointerId: number, semitones: number) => void;
 		onRelease: (pointerId: number) => void;
+		playingPitches: number[];
 	} = $props();
 
 	let pressed = $state<Record<number, number>>({});
@@ -38,7 +40,7 @@
 	}
 
 	function isPressed(pitch: number) {
-		return Object.values(pressed).includes(pitch);
+		return playingPitches.includes(pitch);
 	}
 
 	const whiteKeys = [
@@ -67,9 +69,11 @@
 	{#each whiteKeys as key (key.pitch)}
 		<button
 			type="button"
-			class="flex min-w-0 flex-1 items-end justify-center rounded-b-md border border-slate-700 bg-white pb-2 text-xs text-slate-700 active:bg-blue-200"
-			class:bg-blue-200={isPressed(key.pitch)}
+			class="flex min-w-0 flex-1 items-end justify-center rounded-b-md border border-slate-700 pb-2 text-xs text-slate-700"
+			class:bg-white={!isPressed(key.pitch)}
+			class:bg-amber-300={isPressed(key.pitch)}
 			aria-label={'Play ' + key.name}
+			aria-pressed={isPressed(key.pitch)}
 			onpointerdown={(event) => begin(event, key.pitch)}
 			onpointermove={move}
 			onpointerup={end}
@@ -85,10 +89,12 @@
 	{#each blackKeys as key (key.pitch)}
 		<button
 			type="button"
-			class="absolute top-0 z-10 flex h-[64%] w-[8%] items-end justify-center rounded-b-md border border-slate-950 bg-slate-900 pb-2 text-[10px] text-white shadow-md active:bg-blue-700"
-			class:bg-blue-700={isPressed(key.pitch)}
+			class="absolute top-0 z-10 flex h-[64%] w-[8%] items-end justify-center rounded-b-md border border-slate-950 pb-2 text-[10px] text-white shadow-md"
+			class:bg-slate-900={!isPressed(key.pitch)}
+			class:bg-amber-500={isPressed(key.pitch)}
 			style:left={((key.after + 1) / whiteKeys.length) * 100 - 4 + '%'}
 			aria-label={'Play ' + key.name}
+			aria-pressed={isPressed(key.pitch)}
 			onpointerdown={(event) => begin(event, key.pitch)}
 			onpointermove={move}
 			onpointerup={end}

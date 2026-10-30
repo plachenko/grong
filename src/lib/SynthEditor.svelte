@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import PianoKeyboard from '#lib/PianoKeyboard.svelte';
 	import type { ClipDraft } from '#lib/daw.js';
 	import {
@@ -35,6 +36,9 @@
 	let scaleRoot = $state(0);
 	let scale = $state<Scale>('major');
 	let activePitch = $state<number | null>(null);
+	let livePitches = $state<number[]>([]);
+	let tappedPitches = $state<number[]>([]);
+	let previewPitches = $state<number[]>([]);
 	let notes = $state<Note[]>([]);
 	let recording = $state(false);
 	let previewing = $state(false);
@@ -47,6 +51,9 @@
 	let context: AudioContext | undefined;
 	let previewContext: AudioContext | undefined;
 	let previewTimer: ReturnType<typeof setTimeout> | undefined;
+	let previewFrame: number | undefined;
+	const tapTimers = new SvelteSet<ReturnType<typeof setTimeout>>();
+	const tapCounts = new SvelteMap<number, number>();
 	let recordTimer: ReturnType<typeof setTimeout> | undefined;
 	let recordStart = 0;
 	let takeNumber = 1;
@@ -78,6 +85,41 @@
 	let tempo = $derived(Math.min(240, Math.max(40, Number(bpm) || 120)));
 	let stepLength = $derived((60 / tempo) * (BEATS / STEPS));
 	let envelope = $derived({ attack, decay, sustain, release });
+	let playingPitches = $derived([
+		...new Set([...livePitches, ...tappedPitches, ...previewPitches])
+	]);
+
+	function refreshLivePitches() {
+		livePitches = Object.values(activeVoices).map((voice) => Math.round(voice.pitch));
+	}
+
+	function markTap(pitch: number, length: number) {
+		const key = Math.round(pitch);
+		tapCounts.set(key, (tapCounts.get(key) ?? 0) + 1);
+		tappedPitches = [...tapCounts.keys()];
+		const timer = setTimeout(() => {
+			tapTimers.delete(timer);
+			const remaining = (tapCounts.get(key) ?? 1) - 1;
+			if (remaining) tapCounts.set(key, remaining);
+			else tapCounts.delete(key);
+			tappedPitches = [...tapCounts.keys()];
+		}, length * 1000);
+		tapTimers.add(timer);
+	}
+
+	function pitchDuringNote(note: Note, elapsed: number) {
+		let previousTime = 0;
+		let previousPitch = note.pitch;
+		for (const bend of note.bends ?? []) {
+			if (elapsed < bend.time) {
+				const fraction = (elapsed - previousTime) / (bend.time - previousTime);
+				return previousPitch + (bend.pitch - previousPitch) * fraction;
+			}
+			previousTime = bend.time;
+			previousPitch = bend.pitch;
+		}
+		return previousPitch;
+	}
 
 	async function tap(pitch: number) {
 		if (recording) {
@@ -96,6 +138,7 @@
 				kind === 'piano' ? 0.25 : 0.18,
 				envelope
 			);
+			markTap(pitch, kind === 'piano' ? 0.25 : 0.18);
 		} catch {
 			message = 'Audio playback is unavailable in this browser.';
 		}
@@ -135,6 +178,7 @@
 			pitch: initialPitch
 		};
 		activePitch = initialPitch;
+		refreshLivePitches();
 	}
 
 	function bendPiano(pointerId: number, semitones: number) {
@@ -145,6 +189,7 @@
 		if (Math.abs(pitch - active.pitch) < 0.015) return;
 		active.pitch = pitch;
 		activePitch = pitch;
+		refreshLivePitches();
 		active.bend(pitch, context?.currentTime ?? 0);
 		if (active.noteIndex !== null) {
 			const index = active.noteIndex;
@@ -166,6 +211,7 @@
 		if (!active) return;
 		delete activeVoices[pointerId];
 		activePitch = Object.values(activeVoices).at(-1)?.pitch ?? null;
+		refreshLivePitches();
 		active.release(context?.currentTime ?? 0);
 		if (active.noteIndex !== null) {
 			const index = active.noteIndex;
@@ -319,6 +365,9 @@
 	function stopPreview() {
 		if (previewTimer) clearTimeout(previewTimer);
 		previewTimer = undefined;
+		if (previewFrame !== undefined) cancelAnimationFrame(previewFrame);
+		previewFrame = undefined;
+		previewPitches = [];
 		if (previewContext) void previewContext.close();
 		previewContext = undefined;
 		previewing = false;
@@ -334,12 +383,42 @@
 			const activeContext = new AudioContext();
 			previewContext = activeContext;
 			await activeContext.resume();
+			if (previewContext !== activeContext) {
+				void activeContext.close();
+				return;
+			}
 			const previewTempo = tempo;
 			const previewNotes = notes.map((note) => ({ ...note }));
 			const previewEnvelope = { ...envelope };
 			const bar = barLength(previewTempo);
 			let nextStart = activeContext.currentTime + 0.05;
+			const firstStart = nextStart;
+			const previewLoop = loopEnabled;
+			const updateHighlights = () => {
+				if (previewContext !== activeContext) return;
+				const elapsed = activeContext.currentTime - firstStart;
+				const position = previewLoop ? ((elapsed % bar) + bar) % bar : elapsed;
+				const active =
+					elapsed < 0
+						? []
+						: previewNotes.flatMap((note) => {
+								const length =
+									kind === 'piano'
+										? (note.duration ?? 30 / previewTempo)
+										: note.pitch === 42
+											? 0.08
+											: 0.2;
+								const end = previewLoop ? Math.min(note.start + length, bar) : note.start + length;
+								return position >= note.start && position < end
+									? [Math.round(pitchDuringNote(note, position - note.start))]
+									: [];
+							});
+				const next = [...new Set(active)];
+				if (next.join(',') !== previewPitches.join(',')) previewPitches = next;
+				previewFrame = requestAnimationFrame(updateHighlights);
+			};
 			previewing = true;
+			previewFrame = requestAnimationFrame(updateHighlights);
 			if (loopEnabled) {
 				const queueBars = () => {
 					if (previewContext !== activeContext) return;
@@ -409,6 +488,8 @@
 
 	onDestroy(() => {
 		disposed = true;
+		for (const timer of tapTimers) clearTimeout(timer);
+		tapTimers.clear();
 		releaseAllPiano();
 		if (vocalTimer) clearTimeout(vocalTimer);
 		if (recorder?.state === 'recording') recorder.stop();
@@ -593,6 +674,7 @@
 				onPress={pressPiano}
 				onMove={bendPiano}
 				onRelease={releasePiano}
+				{playingPitches}
 			/>
 		</div>
 	{:else}
@@ -600,7 +682,10 @@
 			{#each labels[kind] as row (row.pitch)}
 				<button
 					type="button"
-					class="rounded border-2 border-red-500 bg-white px-3 py-2 active:bg-yellow-200"
+					class="rounded border-2 border-red-500 px-3 py-2"
+					class:bg-white={!playingPitches.includes(row.pitch)}
+					class:bg-amber-300={playingPitches.includes(row.pitch)}
+					aria-pressed={playingPitches.includes(row.pitch)}
 					onclick={() => tap(row.pitch)}
 				>
 					{row.name}
@@ -620,12 +705,15 @@
 						<button
 							type="button"
 							class="h-7 rounded-r border border-slate-700 text-left text-xs"
-							class:bg-slate-900={isBlackKey(row.pitch)}
+							class:bg-slate-900={isBlackKey(row.pitch) && !playingPitches.includes(row.pitch)}
 							class:text-white={isBlackKey(row.pitch)}
-							class:bg-white={!isBlackKey(row.pitch)}
+							class:bg-white={!isBlackKey(row.pitch) && !playingPitches.includes(row.pitch)}
+							class:bg-amber-500={isBlackKey(row.pitch) && playingPitches.includes(row.pitch)}
+							class:bg-amber-300={!isBlackKey(row.pitch) && playingPitches.includes(row.pitch)}
 							class:pl-4={isBlackKey(row.pitch)}
 							class:pl-2={!isBlackKey(row.pitch)}
 							aria-label={'Play ' + row.name}
+							aria-pressed={playingPitches.includes(row.pitch)}
 							onclick={() => tap(row.pitch)}>{row.name}</button
 						>
 					{:else}
