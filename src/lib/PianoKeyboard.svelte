@@ -64,7 +64,9 @@
 
 <div
 	class="relative flex h-28 w-full max-w-2xl touch-none rounded-md border-2 border-slate-800 bg-slate-800 p-0.5 select-none"
+	role="group"
 	aria-label="Playable piano keyboard"
+	oncontextmenu={(event) => event.preventDefault()}
 >
 	{#each whiteKeys as key (key.pitch)}
 		<button

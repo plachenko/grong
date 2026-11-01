@@ -640,10 +640,8 @@
 	});
 </script>
 
-<section
-	class="flex h-[min(68dvh,44rem)] min-h-0 shrink-0 flex-col overflow-hidden border-b border-red-400 bg-red-200"
->
-	<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+<section class="flex min-h-0 flex-1 flex-col overflow-hidden bg-red-200">
+	<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
 		<div class="flex flex-row flex-wrap items-start gap-4">
 			<div class="min-w-[18rem] flex-1">
 				<div class="mb-3 flex flex-wrap items-center gap-3">
@@ -873,18 +871,8 @@
 		</p>
 		{#if message}<p class="mt-2 text-sm" role="status">{message}</p>{/if}
 	</div>
-	<div class="flex h-[62%] min-h-0 shrink-0 flex-col gap-3 border-t border-red-400 p-3">
-		{#if kind === 'piano'}
-			<div class="shrink-0">
-				<PianoKeyboard
-					onPlay={tap}
-					onPress={pressPiano}
-					onMove={bendPiano}
-					onRelease={releasePiano}
-					{playingPitches}
-				/>
-			</div>
-		{:else}
+	<div class="flex min-h-[150px] flex-[2] flex-col gap-2 border-t border-red-400 p-2">
+		{#if kind === 'drums'}
 			<div class="flex shrink-0 flex-wrap gap-2">
 				{#each labels[kind] as row (row.pitch)}
 					<button
@@ -950,5 +938,16 @@
 				</div>
 			</div>
 		</div>
+		{#if kind === 'piano'}
+			<div class="shrink-0">
+				<PianoKeyboard
+					onPlay={tap}
+					onPress={pressPiano}
+					onMove={bendPiano}
+					onRelease={releasePiano}
+					{playingPitches}
+				/>
+			</div>
+		{/if}
 	</div>
 </section>

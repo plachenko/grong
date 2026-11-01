@@ -37,5 +37,8 @@
 	"imports": {
 		"#lib": "./src/lib/index.js",
 		"#lib/*": "./src/lib/*"
+	},
+	"dependencies": {
+		"paneforge": "^1.0.2"
 	}
 }

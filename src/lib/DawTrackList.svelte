@@ -138,15 +138,18 @@
 	}
 </script>
 
-<div class="overflow-x-auto rounded border border-slate-500 bg-slate-950 text-white">
-	<div style:width={220 + timelineWidth + 'px'}>
-		<div class="flex h-9 border-b border-slate-600">
+<div class="h-full min-h-0 overflow-auto border border-slate-500 bg-slate-950 text-white">
+	<div class="flex min-h-full flex-col" style:min-width={220 + timelineWidth + 'px'}>
+		<div data-track-header class="flex h-9 shrink-0 border-b border-slate-600">
 			<div
 				class="sticky left-0 z-30 flex w-[220px] shrink-0 items-center bg-slate-800 px-3 text-sm font-semibold"
 			>
 				Tracks
 			</div>
-			<div class="relative h-full shrink-0 bg-slate-800" style:width={timelineWidth + 'px'}>
+			<div
+				class="relative h-full min-w-0 flex-1 bg-slate-800"
+				style:min-width={timelineWidth + 'px'}
+			>
 				{#each ruler as second (second)}
 					<div
 						class="absolute top-0 h-full border-l border-slate-600 pl-1 text-xs text-slate-300"
@@ -158,7 +161,7 @@
 			</div>
 		</div>
 		{#each tracks as track (track.id)}
-			<div class="flex h-24 border-b border-slate-700">
+			<div data-track-row class="flex h-24 shrink-0 border-b border-slate-700">
 				<div
 					class="sticky left-0 z-30 flex w-[220px] shrink-0 flex-col justify-center gap-1 border-r border-slate-600 bg-slate-800 px-2"
 				>
@@ -199,8 +202,8 @@
 					</div>
 				</div>
 				<div
-					class="timeline-grid relative h-24 shrink-0"
-					style:width={timelineWidth + 'px'}
+					class="timeline-grid relative h-24 min-w-0 flex-1"
+					style:min-width={timelineWidth + 'px'}
 					data-track-id={track.id}
 				>
 					{#each track.clips as clip (clip.id)}
@@ -223,6 +226,7 @@
 							onpointermove={pointerMove}
 							onpointerup={pointerUp}
 							onpointercancel={() => (drag = null)}
+							oncontextmenu={(event) => event.preventDefault()}
 							onkeydown={(event) => keyMove(event, clip, track.id)}
 						>
 							<span class="absolute top-0 left-1 z-10 truncate text-xs font-medium"
@@ -260,6 +264,22 @@
 				</div>
 			</div>
 		{/each}
+		<div class="flex min-h-0 flex-1">
+			<div
+				class="sticky left-0 z-10 w-[220px] shrink-0 border-r border-slate-700 bg-slate-800"
+			></div>
+			<div class="timeline-grid relative min-w-0 flex-1" style:min-width={timelineWidth + 'px'}>
+				{#if !tracks.length}
+					<p class="absolute inset-x-3 top-8 text-sm text-slate-400">
+						Drag A, P, D, or E here to add a track, or tap a button to start.
+					</p>
+				{/if}
+				<div
+					class="pointer-events-none absolute top-0 h-full w-px bg-red-400"
+					style:left={playhead * PIXELS_PER_SECOND + 'px'}
+				></div>
+			</div>
+		</div>
 	</div>
 </div>
 

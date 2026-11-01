@@ -161,14 +161,33 @@
 <div id="PlaybackBar" class="flex min-h-[60px] shrink-0 items-center gap-4 bg-blue-400 p-4">
 	<button
 		type="button"
-		class="rounded-md border-2 px-2"
+		class="grid size-8 shrink-0 place-items-center rounded-md border-2 disabled:opacity-50"
 		disabled={!hasClips || starting}
+		aria-label={playing ? 'Pause' : 'Play'}
+		title={playing ? 'Pause' : 'Play'}
 		onclick={() => (playing ? pause() : play())}
 	>
-		{playing ? 'Pause' : 'Play'}
+		{#if playing}
+			<svg class="size-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+				<path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+			</svg>
+		{:else}
+			<svg class="size-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+				<path d="M7 4.5v15l12-7.5z" />
+			</svg>
+		{/if}
 	</button>
-	<button type="button" class="rounded-md border-2 px-2" disabled={!hasClips} onclick={stop}>
-		Stop
+	<button
+		type="button"
+		class="grid size-8 shrink-0 place-items-center rounded-md border-2 disabled:opacity-50"
+		disabled={!hasClips}
+		aria-label="Stop"
+		title="Stop"
+		onclick={stop}
+	>
+		<svg class="size-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M5 5h14v14H5z" />
+		</svg>
 	</button>
 	<input
 		type="range"
